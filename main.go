@@ -28,9 +28,9 @@ func main() {
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 
 	flag.StringVar(&url, "u", "ws://127.0.0.1/", "url")
-	flag.IntVar(&payloadSize, "p", 4*1024, "payload size")
+	flag.IntVar(&payloadSize, "p", 1000, "payload size")
 	flag.IntVar(&numClient, "c", 100, "num of client")
-	flag.IntVar(&numMessage, "n", 100, "num of message per connection")
+	flag.IntVar(&numMessage, "n", 10000, "num of message per connection")
 	flag.BoolVar(&compress, "compress", false, "compress")
 	flag.Parse()
 
@@ -70,8 +70,8 @@ func main() {
 	})
 
 	<-handler.done
-	fmt.Printf("Cost: %s\n", time.Since(t0).String())
 	fmt.Printf("IOPS: %.0f\n", float64(N)/time.Since(t0).Seconds())
+	fmt.Printf("Cost: %.2fms\n", float64(time.Since(t0).Microseconds())/1000)
 	handler.Report()
 }
 
@@ -116,11 +116,11 @@ func (c *Handler) Report() {
 	})
 
 	idx1 := int(float64(N) * 0.50)
-	fmt.Printf("P50: %.2fms\n", float64(c.stats[idx1])/1000000)
+	fmt.Printf("P50:  %.2fms\n", float64(c.stats[idx1])/1000000)
 
 	idx2 := int(float64(N) * 0.90)
-	fmt.Printf("P90: %.2fms\n", float64(c.stats[idx2])/1000000)
+	fmt.Printf("P90:  %.2fms\n", float64(c.stats[idx2])/1000000)
 
 	idx3 := int(float64(N) * 0.99)
-	fmt.Printf("P99: %.2fms\n", float64(c.stats[idx3])/1000000)
+	fmt.Printf("P99:  %.2fms\n", float64(c.stats[idx3])/1000000)
 }
