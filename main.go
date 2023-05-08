@@ -4,16 +4,18 @@ import (
 	"encoding/binary"
 	"flag"
 	"fmt"
+	"github.com/lxzan/concurrency"
 	"github.com/lxzan/gws"
 	"github.com/lxzan/wsbench/internal"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"os"
-	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
 )
+
+const M = 10000
 
 var (
 	url         string
@@ -22,6 +24,7 @@ var (
 	numClient   int
 	numMessage  int
 	N           int
+	stats       [M]uint64
 )
 
 func main() {
@@ -38,20 +41,24 @@ func main() {
 	var handler = &Handler{
 		done:     make(chan struct{}),
 		sessions: &sync.Map{},
-		stats:    make([]uint64, 0, N),
 	}
 
+	var cc = concurrency.NewWorkerGroup[int]()
 	for i := 0; i < numClient; i++ {
+		cc.Push(i)
+	}
+	cc.OnMessage = func(args int) error {
 		socket, _, err := gws.NewClient(handler, &gws.ClientOption{
 			CompressEnabled: compress,
 			Addr:            url,
 		})
-		if err != nil {
-			log.Fatal().Msg(err.Error())
-			return
-		}
 		handler.sessions.Store(socket, 1)
 		go socket.ReadLoop()
+		return err
+	}
+	if err := cc.Start(); err != nil {
+		log.Fatal().Msg(err.Error())
+		return
 	}
 
 	var t0 = time.Now()
@@ -70,15 +77,18 @@ func main() {
 	})
 
 	<-handler.done
-	fmt.Printf("IOPS: %.0f\n", float64(N)/time.Since(t0).Seconds())
-	fmt.Printf("Cost: %.2fms\n", float64(time.Since(t0).Microseconds())/1000)
-	handler.Report()
+	log.
+		Info().
+		Int("IOPS", int(float64(N)/time.Since(t0).Seconds())).
+		Str("Duration", time.Since(t0).String()).
+		Str("P50", handler.Report(50)).
+		Str("P90", handler.Report(90)).
+		Str("P99", handler.Report(99)).
+		Msg("")
 }
 
 type Handler struct {
-	sync.Mutex
 	num      int64
-	stats    []uint64
 	sessions *sync.Map
 	done     chan struct{}
 }
@@ -98,29 +108,33 @@ func (c *Handler) OnPong(socket *gws.Conn, payload []byte) {}
 
 func (c *Handler) OnMessage(socket *gws.Conn, message *gws.Message) {
 	defer message.Close()
-	p := message.Bytes()[payloadSize:]
-	cost := uint64(time.Now().UnixNano()) - binary.LittleEndian.Uint64(p)
-	c.Lock()
-	c.stats = append(c.stats, cost)
-	c.Unlock()
 
-	num := atomic.AddInt64(&c.num, 1)
-	if num == int64(N) {
+	p := message.Bytes()[payloadSize:]
+	cost := (uint64(time.Now().UnixNano()) - binary.LittleEndian.Uint64(p)) / 1000000
+	if cost >= M {
+		cost = M - 1
+	}
+	atomic.AddUint64(&stats[cost], 1)
+
+	if atomic.AddInt64(&c.num, 1) == int64(N) {
 		c.done <- struct{}{}
 	}
 }
 
-func (c *Handler) Report() {
-	sort.Slice(c.stats, func(i, j int) bool {
-		return c.stats[i] < c.stats[j]
-	})
-
-	idx1 := int(float64(N) * 0.50)
-	fmt.Printf("P50:  %.2fms\n", float64(c.stats[idx1])/1000000)
-
-	idx2 := int(float64(N) * 0.90)
-	fmt.Printf("P90:  %.2fms\n", float64(c.stats[idx2])/1000000)
-
-	idx3 := int(float64(N) * 0.99)
-	fmt.Printf("P99:  %.2fms\n", float64(c.stats[idx3])/1000000)
+func (c *Handler) Report(rate int) string {
+	sum := uint64(0)
+	threshold := uint64(rate * N / 100)
+	for i, v := range stats {
+		if v == 0 {
+			continue
+		}
+		sum += v
+		if sum >= threshold {
+			if i == M-1 {
+				return "∞"
+			}
+			return fmt.Sprintf("%dms", i)
+		}
+	}
+	return ""
 }
