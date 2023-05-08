@@ -21,6 +21,7 @@ var (
 	payloadSize int
 	numClient   int
 	numMessage  int
+	N           int
 )
 
 func main() {
@@ -33,11 +34,11 @@ func main() {
 	flag.BoolVar(&compress, "compress", false, "compress")
 	flag.Parse()
 
+	N = numClient * numMessage
 	var handler = &Handler{
-		payload:  internal.AlphabetNumeric.Generate(payloadSize),
 		done:     make(chan struct{}),
 		sessions: &sync.Map{},
-		stats:    make([]uint64, 0, numClient*numMessage),
+		stats:    make([]uint64, 0, N),
 	}
 
 	for i := 0; i < numClient; i++ {
@@ -53,7 +54,7 @@ func main() {
 		go socket.ReadLoop()
 	}
 
-	handler.t0 = time.Now()
+	var t0 = time.Now()
 	handler.sessions.Range(func(key, value any) bool {
 		go func() {
 			socket := key.(*gws.Conn)
@@ -69,14 +70,13 @@ func main() {
 	})
 
 	<-handler.done
-	fmt.Printf("Cost: %s\n", time.Since(handler.t0).String())
+	fmt.Printf("Cost: %s\n", time.Since(t0).String())
+	fmt.Printf("IOPS: %.0f\n", float64(N)/time.Since(t0).Seconds())
 	handler.Report()
 }
 
 type Handler struct {
 	sync.Mutex
-	t0       time.Time
-	payload  []byte
 	num      int64
 	stats    []uint64
 	sessions *sync.Map
@@ -98,15 +98,14 @@ func (c *Handler) OnPong(socket *gws.Conn, payload []byte) {}
 
 func (c *Handler) OnMessage(socket *gws.Conn, message *gws.Message) {
 	defer message.Close()
-	p := message.Bytes()
-	p = p[payloadSize:]
+	p := message.Bytes()[payloadSize:]
 	cost := uint64(time.Now().UnixNano()) - binary.LittleEndian.Uint64(p)
 	c.Lock()
 	c.stats = append(c.stats, cost)
 	c.Unlock()
 
 	num := atomic.AddInt64(&c.num, 1)
-	if num == int64(numClient*numMessage) {
+	if num == int64(N) {
 		c.done <- struct{}{}
 	}
 }
@@ -115,14 +114,13 @@ func (c *Handler) Report() {
 	sort.Slice(c.stats, func(i, j int) bool {
 		return c.stats[i] < c.stats[j]
 	})
-	var n = numClient * numMessage
 
-	idx1 := int(float64(n) * 0.50)
+	idx1 := int(float64(N) * 0.50)
 	fmt.Printf("P50: %.2fms\n", float64(c.stats[idx1])/1000000)
 
-	idx2 := int(float64(n) * 0.90)
+	idx2 := int(float64(N) * 0.90)
 	fmt.Printf("P90: %.2fms\n", float64(c.stats[idx2])/1000000)
 
-	idx3 := int(float64(n) * 0.99)
+	idx3 := int(float64(N) * 0.99)
 	fmt.Printf("P99: %.2fms\n", float64(c.stats[idx3])/1000000)
 }
