@@ -76,7 +76,10 @@ func main() {
 		return true
 	})
 
+	go handler.ShowProgress()
+
 	<-handler.done
+	log.Info().Str("Percentage", "100.00%").Int("Requests", N).Msg("")
 	log.
 		Info().
 		Int("IOPS", int(float64(N)/time.Since(t0).Seconds())).
@@ -137,4 +140,15 @@ func (c *Handler) Report(rate int) string {
 		}
 	}
 	return ""
+}
+
+func (c *Handler) ShowProgress() {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		<-ticker.C
+		requests := atomic.LoadInt64(&c.num)
+		percentage := fmt.Sprintf("%.2f", float64(100*requests)/float64(N)) + "%"
+		log.Info().Str("Percentage", percentage).Int64("Requests", requests).Msg("")
+	}
 }
