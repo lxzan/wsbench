@@ -70,7 +70,7 @@ func main() {
 				var b [8]byte
 				binary.LittleEndian.PutUint64(b[0:], uint64(time.Now().UnixNano()))
 				payload = append(payload[:payloadSize], b[0:]...)
-				_ = socket.WriteMessage(gws.OpcodeText, payload)
+				_ = socket.WriteMessage(gws.OpcodeBinary, payload)
 			}
 		}()
 		return true
@@ -103,7 +103,10 @@ func (c *Handler) OnError(socket *gws.Conn, err error) {
 	os.Exit(0)
 }
 
-func (c *Handler) OnClose(socket *gws.Conn, code uint16, reason []byte) {}
+func (c *Handler) OnClose(socket *gws.Conn, code uint16, reason []byte) {
+	log.Error().Int("Code", int(code)).Msg(string(reason))
+	os.Exit(0)
+}
 
 func (c *Handler) OnPing(socket *gws.Conn, payload []byte) {}
 
