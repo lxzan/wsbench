@@ -1,4 +1,4 @@
-package pkg
+package iops
 
 import (
 	"encoding/binary"
@@ -108,7 +108,7 @@ func Run(ctx *cli.Context) error {
 			for i := 0; i < numMessage; i++ {
 				var b [8]byte
 				binary.LittleEndian.PutUint64(b[0:], uint64(time.Now().UnixNano()))
-				payload = append(payload[:payloadSize], b[0:]...)
+				payload = append(payload, b[0:]...)
 				_ = socket.WriteMessage(gws.OpcodeBinary, payload)
 			}
 		}()
@@ -155,7 +155,8 @@ func (c *Handler) OnPong(socket *gws.Conn, payload []byte) {}
 func (c *Handler) OnMessage(socket *gws.Conn, message *gws.Message) {
 	defer message.Close()
 
-	p := message.Bytes()[payloadSize:]
+	size := message.Data.Len()
+	p := message.Bytes()[size-8:]
 	cost := (uint64(time.Now().UnixNano()) - binary.LittleEndian.Uint64(p)) / 1000000
 	if cost >= M {
 		cost = M - 1

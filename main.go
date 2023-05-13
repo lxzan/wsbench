@@ -1,7 +1,8 @@
 package main
 
 import (
-	"github.com/lxzan/wsbench/pkg"
+	"github.com/lxzan/wsbench/pkg/broadcast"
+	"github.com/lxzan/wsbench/pkg/iops"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	cli "github.com/urfave/cli/v2"
@@ -15,7 +16,8 @@ func main() {
 		Name:  "wsbench",
 		Usage: "testing websocket server iops and latency",
 		Commands: []*cli.Command{
-			pkg.NewCommand(),
+			iops.NewCommand(),
+			broadcast.NewCommand(),
 		},
 	}
 
