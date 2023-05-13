@@ -17,13 +17,14 @@ import (
 const M = 10000
 
 var (
-	url         string
-	compress    bool
-	payloadSize int
-	numClient   int
-	numMessage  int
-	N           int
-	stats       [M]uint64
+	url          string
+	compress     bool
+	payloadSize  int
+	numClient    int
+	numMessage   int
+	fileContents []byte
+	N            int
+	stats        [M]uint64
 )
 
 func NewCommand() *cli.Command {
@@ -58,6 +59,12 @@ func NewCommand() *cli.Command {
 				Value:       4000,
 				Aliases:     []string{"max_payload_size"},
 			},
+			&cli.StringFlag{
+				Name:        "f",
+				Usage:       "file",
+				DefaultText: "",
+				Aliases:     []string{"file"},
+			},
 			&cli.BoolFlag{
 				Name:        "compress",
 				Usage:       "Whether to turn on compression",
@@ -76,6 +83,15 @@ func Run(ctx *cli.Context) error {
 	payloadSize = ctx.Int("max_payload_size")
 	compress = ctx.Bool("compress")
 	N = numClient * numMessage
+
+	if dir := ctx.String("file"); dir != "" {
+		b, err := os.ReadFile(dir)
+		fileContents = b
+		if err != nil {
+			return err
+		}
+		fileContents = append(fileContents, "12345678"...)
+	}
 
 	var handler = &Handler{
 		done:     make(chan struct{}),
@@ -103,12 +119,16 @@ func Run(ctx *cli.Context) error {
 	handler.sessions.Range(func(key, value any) bool {
 		go func() {
 			socket := key.(*gws.Conn)
-			size := internal.AlphabetNumeric.Intn(payloadSize)
+			size := internal.AlphabetNumeric.Intn(payloadSize) + 8
 			payload := internal.AlphabetNumeric.Generate(size)
+			if len(fileContents) > 0 {
+				payload = fileContents
+				size = len(fileContents)
+			}
 			for i := 0; i < numMessage; i++ {
 				var b [8]byte
 				binary.LittleEndian.PutUint64(b[0:], uint64(time.Now().UnixNano()))
-				payload = append(payload, b[0:]...)
+				payload = append(payload[:size-8], b[0:]...)
 				_ = socket.WriteMessage(gws.OpcodeBinary, payload)
 			}
 		}()

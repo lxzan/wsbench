@@ -116,12 +116,12 @@ func Run(ctx *cli.Context) error {
 			<-ticker.C
 			handler.sessions.Range(func(key, value any) bool {
 				socket := key.(*gws.Conn)
-				size := internal.AlphabetNumeric.Intn(payloadSize)
+				size := internal.AlphabetNumeric.Intn(payloadSize) + 8
 				payload := internal.AlphabetNumeric.Generate(size)
 				for i := 0; i < numMessage; i++ {
 					var b [8]byte
 					binary.LittleEndian.PutUint64(b[0:], uint64(time.Now().UnixNano()))
-					payload = append(payload, b[0:]...)
+					payload = append(payload[:size-8], b[0:]...)
 					_ = socket.WriteAsync(gws.OpcodeBinary, payload)
 				}
 				return true
