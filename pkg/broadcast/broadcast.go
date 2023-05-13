@@ -23,6 +23,7 @@ var (
 	numClient   int
 	numMessage  int
 	N           int
+	interval    int
 	stats       [M]uint64
 )
 
@@ -82,6 +83,7 @@ func Run(ctx *cli.Context) error {
 	numMessage = ctx.Int("message_num")
 	payloadSize = ctx.Int("max_payload_size")
 	compress = ctx.Bool("compress")
+	interval = ctx.Int("interval")
 	N = numClient * numMessage
 
 	var handler = &Handler{
@@ -107,23 +109,21 @@ func Run(ctx *cli.Context) error {
 	}
 
 	go func() {
-		ticker := time.NewTicker(time.Duration(ctx.Int("interval")) * time.Second)
+		ticker := time.NewTicker(time.Duration(interval) * time.Second)
 		defer ticker.Stop()
 
 		for {
 			<-ticker.C
 			handler.sessions.Range(func(key, value any) bool {
-				go func() {
-					socket := key.(*gws.Conn)
-					size := internal.AlphabetNumeric.Intn(payloadSize)
-					payload := internal.AlphabetNumeric.Generate(size)
-					for i := 0; i < numMessage; i++ {
-						var b [8]byte
-						binary.LittleEndian.PutUint64(b[0:], uint64(time.Now().UnixNano()))
-						payload = append(payload, b[0:]...)
-						_ = socket.WriteAsync(gws.OpcodeBinary, payload)
-					}
-				}()
+				socket := key.(*gws.Conn)
+				size := internal.AlphabetNumeric.Intn(payloadSize)
+				payload := internal.AlphabetNumeric.Generate(size)
+				for i := 0; i < numMessage; i++ {
+					var b [8]byte
+					binary.LittleEndian.PutUint64(b[0:], uint64(time.Now().UnixNano()))
+					payload = append(payload, b[0:]...)
+					_ = socket.WriteAsync(gws.OpcodeBinary, payload)
+				}
 				return true
 			})
 		}
@@ -157,18 +157,7 @@ func (c *Handler) OnPong(socket *gws.Conn, payload []byte) {}
 
 func (c *Handler) OnMessage(socket *gws.Conn, message *gws.Message) {
 	defer message.Close()
-
-	size := message.Data.Len()
-	p := message.Bytes()[size-8:]
-	cost := (uint64(time.Now().UnixNano()) - binary.LittleEndian.Uint64(p)) / 1000000
-	if cost >= M {
-		cost = M - 1
-	}
-	atomic.AddUint64(&stats[cost], 1)
-
-	if atomic.AddInt64(&c.num, 1) == int64(N) {
-		c.done <- struct{}{}
-	}
+	atomic.AddInt64(&c.num, 1)
 }
 
 func (c *Handler) Report(rate int) string {
@@ -190,12 +179,11 @@ func (c *Handler) Report(rate int) string {
 }
 
 func (c *Handler) ShowProgress() {
-	ticker := time.NewTicker(time.Second)
+	ticker := time.NewTicker(time.Duration(interval) * time.Second)
 	defer ticker.Stop()
 	for {
 		<-ticker.C
 		requests := atomic.LoadInt64(&c.num)
-		percentage := fmt.Sprintf("%.2f", float64(100*requests)/float64(N)) + "%"
-		log.Info().Str("Percentage", percentage).Int64("Requests", requests).Msg("")
+		log.Info().Int64("Requests", requests).Msg("")
 	}
 }
