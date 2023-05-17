@@ -17,7 +17,8 @@ import (
 const M = 10000
 
 var (
-	url          string
+	serial       = int64(0)
+	urls         []string
 	compress     bool
 	payloadSize  int
 	numClient    int
@@ -27,16 +28,19 @@ var (
 	stats        [M]uint64
 )
 
+func SelectURL() string {
+	nextId := atomic.AddInt64(&serial, 1)
+	return urls[nextId%int64(len(urls))]
+}
+
 func NewCommand() *cli.Command {
 	return &cli.Command{
 		Name: "iops",
 		Flags: []cli.Flag{
-			&cli.StringFlag{
-				Name:        "u",
-				Aliases:     []string{"url"},
-				Usage:       "server address",
-				DefaultText: "ws://127.0.0.1:3000/connect",
-				Value:       "ws://127.0.0.1:3000/connect",
+			&cli.StringSliceFlag{
+				Name:    "u",
+				Aliases: []string{"urls"},
+				Usage:   "server address",
 			},
 			&cli.IntFlag{
 				Name:        "c",
@@ -54,14 +58,14 @@ func NewCommand() *cli.Command {
 			},
 			&cli.IntFlag{
 				Name:        "p",
-				Usage:       "max payload size",
+				Usage:       "payload size",
 				DefaultText: "4000",
 				Value:       4000,
-				Aliases:     []string{"max_payload_size"},
+				Aliases:     []string{"payload_size"},
 			},
 			&cli.StringFlag{
 				Name:        "f",
-				Usage:       "file",
+				Usage:       "load payload content from file",
 				DefaultText: "",
 				Aliases:     []string{"file"},
 			},
@@ -77,10 +81,10 @@ func NewCommand() *cli.Command {
 }
 
 func Run(ctx *cli.Context) error {
-	url = ctx.String("url")
+	urls = ctx.StringSlice("urls")
 	numClient = ctx.Int("connection")
 	numMessage = ctx.Int("message_num")
-	payloadSize = ctx.Int("max_payload_size")
+	payloadSize = ctx.Int("payload_size")
 	compress = ctx.Bool("compress")
 	N = numClient * numMessage
 
@@ -105,7 +109,7 @@ func Run(ctx *cli.Context) error {
 	cc.OnMessage = func(args int) error {
 		socket, _, err := gws.NewClient(handler, &gws.ClientOption{
 			CompressEnabled: compress,
-			Addr:            url,
+			Addr:            SelectURL(),
 		})
 		handler.sessions.Store(socket, 1)
 		go socket.ReadLoop()
@@ -119,16 +123,15 @@ func Run(ctx *cli.Context) error {
 	handler.sessions.Range(func(key, value any) bool {
 		go func() {
 			socket := key.(*gws.Conn)
-			size := internal.AlphabetNumeric.Intn(payloadSize) + 8
-			payload := internal.AlphabetNumeric.Generate(size)
+			payload := internal.AlphabetNumeric.Generate(payloadSize)
 			if len(fileContents) > 0 {
 				payload = fileContents
-				size = len(fileContents)
+				payloadSize = len(fileContents)
 			}
 			for i := 0; i < numMessage; i++ {
 				var b [8]byte
 				binary.LittleEndian.PutUint64(b[0:], uint64(time.Now().UnixNano()))
-				payload = append(payload[:size-8], b[0:]...)
+				payload = append(payload[:payloadSize], b[0:]...)
 				_ = socket.WriteMessage(gws.OpcodeBinary, payload)
 			}
 		}()
