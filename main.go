@@ -9,6 +9,8 @@ import (
 	"os"
 )
 
+const Version = "v1.0.5"
+
 func main() {
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 
@@ -18,6 +20,13 @@ func main() {
 		Commands: []*cli.Command{
 			iops.NewCommand(),
 			broadcast.NewCommand(),
+			{
+				Name: "version",
+				Action: func(context *cli.Context) error {
+					println(Version)
+					return nil
+				},
+			},
 		},
 	}
 

@@ -144,13 +144,10 @@ type Handler struct {
 
 func (c *Handler) OnOpen(socket *gws.Conn) {}
 
-func (c *Handler) OnError(socket *gws.Conn, err error) {
-	log.Error().Msg(err.Error())
-	os.Exit(0)
-}
-
-func (c *Handler) OnClose(socket *gws.Conn, code uint16, reason []byte) {
-	log.Error().Int("Code", int(code)).Msg(string(reason))
+func (c *Handler) OnClose(socket *gws.Conn, err error) {
+	if _, ok := err.(*gws.CloseError); !ok {
+		log.Error().Msg(err.Error())
+	}
 	os.Exit(0)
 }
 
