@@ -104,6 +104,9 @@ func Run(ctx *cli.Context) error {
 			CompressEnabled: compress,
 			Addr:            SelectURL(),
 		})
+		if err != nil {
+			return err
+		}
 		handler.sessions.Store(socket, 1)
 		go socket.ReadLoop()
 		return err

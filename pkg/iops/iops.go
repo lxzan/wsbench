@@ -111,6 +111,9 @@ func Run(ctx *cli.Context) error {
 			CompressEnabled: compress,
 			Addr:            SelectURL(),
 		})
+		if err != nil {
+			return err
+		}
 		handler.sessions.Store(socket, 1)
 		go socket.ReadLoop()
 		return err
@@ -120,23 +123,22 @@ func Run(ctx *cli.Context) error {
 	}
 
 	var t0 = time.Now()
-	handler.sessions.Range(func(key, value any) bool {
-		go func() {
+	for i := 0; i < numMessage; i++ {
+		payload := internal.AlphabetNumeric.Generate(payloadSize)
+		if len(fileContents) > 0 {
+			payload = fileContents
+			payloadSize = len(fileContents)
+		}
+		var b [8]byte
+		binary.LittleEndian.PutUint64(b[0:], uint64(time.Now().UnixNano()))
+		payload = append(payload[:payloadSize], b[0:]...)
+
+		handler.sessions.Range(func(key, value any) bool {
 			socket := key.(*gws.Conn)
-			payload := internal.AlphabetNumeric.Generate(payloadSize)
-			if len(fileContents) > 0 {
-				payload = fileContents
-				payloadSize = len(fileContents)
-			}
-			for i := 0; i < numMessage; i++ {
-				var b [8]byte
-				binary.LittleEndian.PutUint64(b[0:], uint64(time.Now().UnixNano()))
-				payload = append(payload[:payloadSize], b[0:]...)
-				_ = socket.WriteMessage(gws.OpcodeBinary, payload)
-			}
-		}()
-		return true
-	})
+			_ = socket.WriteAsync(gws.OpcodeBinary, payload)
+			return true
+		})
+	}
 
 	go handler.ShowProgress()
 
