@@ -4,7 +4,7 @@ go 1.18
 
 require (
 	github.com/lxzan/concurrency v1.2.0
-	github.com/lxzan/gws v1.6.0
+	github.com/lxzan/gws v1.6.1
 	github.com/rs/zerolog v1.29.1
 	github.com/urfave/cli/v2 v2.25.3
 )

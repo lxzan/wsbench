@@ -116,7 +116,7 @@ func Run(ctx *cli.Context) error {
 		}
 		handler.sessions.Store(socket, 1)
 		go socket.ReadLoop()
-		return err
+		return nil
 	}
 	if err := cc.Start(); err != nil {
 		return err
