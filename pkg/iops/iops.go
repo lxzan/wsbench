@@ -123,22 +123,23 @@ func Run(ctx *cli.Context) error {
 	}
 
 	var t0 = time.Now()
-	for i := 0; i < numMessage; i++ {
-		payload := internal.AlphabetNumeric.Generate(payloadSize)
-		if len(fileContents) > 0 {
-			payload = fileContents
-			payloadSize = len(fileContents)
-		}
-		var b [8]byte
-		binary.LittleEndian.PutUint64(b[0:], uint64(time.Now().UnixNano()))
-		payload = append(payload[:payloadSize], b[0:]...)
-
-		handler.sessions.Range(func(key, value any) bool {
+	handler.sessions.Range(func(key, value any) bool {
+		go func() {
 			socket := key.(*gws.Conn)
-			_ = socket.WriteAsync(gws.OpcodeBinary, payload)
-			return true
-		})
-	}
+			payload := internal.AlphabetNumeric.Generate(payloadSize)
+			if len(fileContents) > 0 {
+				payload = fileContents
+				payloadSize = len(fileContents)
+			}
+			for i := 0; i < numMessage; i++ {
+				var b [8]byte
+				binary.LittleEndian.PutUint64(b[0:], uint64(time.Now().UnixNano()))
+				payload = append(payload[:payloadSize], b[0:]...)
+				_ = socket.WriteMessage(gws.OpcodeBinary, payload)
+			}
+		}()
+		return true
+	})
 
 	go handler.ShowProgress()
 
