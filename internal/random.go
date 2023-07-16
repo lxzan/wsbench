@@ -40,7 +40,7 @@ func (c *RandomString) Generate(n int) []byte {
 
 func (c *RandomString) Intn(n int) int {
 	c.mu.Lock()
-	x := rand.Intn(n)
+	x := c.r.Intn(n)
 	c.mu.Unlock()
 	return x
 }
