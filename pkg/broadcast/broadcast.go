@@ -1,6 +1,7 @@
 package broadcast
 
 import (
+	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 	"github.com/lxzan/concurrency"
@@ -103,6 +104,7 @@ func Run(ctx *cli.Context) error {
 		socket, _, err := gws.NewClient(handler, &gws.ClientOption{
 			CompressEnabled: compress,
 			Addr:            SelectURL(),
+			TlsConfig:       &tls.Config{InsecureSkipVerify: true},
 		})
 		if err != nil {
 			return err
