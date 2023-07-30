@@ -164,7 +164,7 @@ type Handler struct {
 	done     chan struct{}
 }
 
-func (c *Handler) OnOpen(socket *gws.Conn) {}
+func (c *Handler) OnOpen(socket *gws.Conn) { socket.SetNoDelay(false) }
 
 func (c *Handler) OnClose(socket *gws.Conn, err error) {
 	if _, ok := err.(*gws.CloseError); !ok {
