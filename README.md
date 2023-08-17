@@ -14,8 +14,9 @@ USAGE:
    wsbench [global options] command [command options] [arguments...]
 
 COMMANDS:
-   iops       
+   echo       
    broadcast  
+   version    
    help, h    Shows a list of commands or help for one command
 
 GLOBAL OPTIONS:
@@ -24,9 +25,9 @@ GLOBAL OPTIONS:
 
 ### example
 
-##### IOPS
+##### Echo
 ```bash
-wsbench iops -c 1000 -n 1000 -p 1000 -u 'ws://127.0.0.1:8000/connect,ws://127.0.0.1:8001/connect'
+wsbench echo -c 1000 -n 1000 -p 1000 -u 'ws://127.0.0.1:8000/connect,ws://127.0.0.1:8001/connect'
 ```
 
 ##### Broadcast

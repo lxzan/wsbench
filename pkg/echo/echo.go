@@ -1,4 +1,4 @@
-package iops
+package echo
 
 import (
 	"crypto/tls"
@@ -36,7 +36,7 @@ func SelectURL() string {
 
 func NewCommand() *cli.Command {
 	return &cli.Command{
-		Name: "iops",
+		Name: "echo",
 		Flags: []cli.Flag{
 			&cli.StringSliceFlag{
 				Name:    "u",

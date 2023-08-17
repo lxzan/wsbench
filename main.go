@@ -2,14 +2,14 @@ package main
 
 import (
 	"github.com/lxzan/wsbench/pkg/broadcast"
-	"github.com/lxzan/wsbench/pkg/iops"
+	"github.com/lxzan/wsbench/pkg/echo"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	cli "github.com/urfave/cli/v2"
 	"os"
 )
 
-const Version = "v1.0.8"
+const Version = "v1.0.9"
 
 func main() {
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
@@ -18,7 +18,7 @@ func main() {
 		Name:  "wsbench",
 		Usage: "testing websocket server iops and latency",
 		Commands: []*cli.Command{
-			iops.NewCommand(),
+			echo.NewCommand(),
 			broadcast.NewCommand(),
 			{
 				Name: "version",
