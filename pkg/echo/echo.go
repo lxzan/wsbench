@@ -3,6 +3,7 @@ package echo
 import (
 	"crypto/tls"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"github.com/lxzan/concurrency"
 	"github.com/lxzan/gws"
@@ -26,6 +27,7 @@ var (
 	numMessage   int
 	fileContents []byte
 	N            int
+	output       string
 	stats        [M]uint64
 )
 
@@ -76,6 +78,13 @@ func NewCommand() *cli.Command {
 				DefaultText: "false",
 				Value:       false,
 			},
+			&cli.StringFlag{
+				Name:        "o",
+				Usage:       "output",
+				DefaultText: "",
+				Value:       "",
+				Aliases:     []string{"output"},
+			},
 		},
 		Action: Run,
 	}
@@ -87,6 +96,7 @@ func Run(ctx *cli.Context) error {
 	numMessage = ctx.Int("message_num")
 	payloadSize = ctx.Int("payload_size")
 	compress = ctx.Bool("compress")
+	output = ctx.String("output")
 	N = numClient * numMessage
 
 	if dir := ctx.String("file"); dir != "" {
@@ -147,14 +157,35 @@ func Run(ctx *cli.Context) error {
 
 	<-handler.done
 	log.Info().Str("Percentage", "100.00%").Int("Requests", N).Msg("")
+
+	var iops = int(float64(N) / time.Since(t0).Seconds())
+	var p50 = handler.Report(50)
+	var p90 = handler.Report(90)
+	var p99 = handler.Report(99)
 	log.
 		Info().
-		Int("IOPS", int(float64(N)/time.Since(t0).Seconds())).
+		Int("IOPS", iops).
 		Str("Duration", time.Since(t0).String()).
-		Str("P50", handler.Report(50)).
-		Str("P90", handler.Report(90)).
-		Str("P99", handler.Report(99)).
+		Str("P50", p50).
+		Str("P90", p90).
+		Str("P99", p99).
 		Msg("")
+
+	if output != "" {
+		file, err := os.OpenFile(output, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
+		if err != nil {
+			return err
+		}
+		b, _ := json.Marshal(map[string]any{
+			"iops":    iops,
+			"payload": payloadSize,
+			"p50":     p50,
+			"p90":     p90,
+			"p99":     p99,
+		})
+		b = append(b, '\n')
+		_, _ = file.Write(b)
+	}
 	return nil
 }
 
