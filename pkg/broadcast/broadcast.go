@@ -2,8 +2,6 @@ package broadcast
 
 import (
 	"crypto/tls"
-	"encoding/binary"
-	"fmt"
 	"github.com/lxzan/concurrency"
 	"github.com/lxzan/gws"
 	"github.com/lxzan/wsbench/internal"
@@ -26,6 +24,7 @@ var (
 	numMessage  int
 	N           int
 	interval    int
+	fileContent []byte
 	stats       [M]uint64
 )
 
@@ -77,6 +76,12 @@ func NewCommand() *cli.Command {
 				Value:       10,
 				Aliases:     []string{"interval"},
 			},
+			&cli.StringFlag{
+				Name:        "f",
+				Usage:       "load payload content from file",
+				DefaultText: "",
+				Aliases:     []string{"file"},
+			},
 		},
 		Action: Run,
 	}
@@ -90,6 +95,13 @@ func Run(ctx *cli.Context) error {
 	compress = ctx.Bool("compress")
 	interval = ctx.Int("interval")
 	N = numClient * numMessage
+	if s := ctx.String("file"); len(s) > 0 {
+		content, err := os.ReadFile(s)
+		if err != nil {
+			return err
+		}
+		fileContent = content
+	}
 
 	var handler = &Handler{
 		done:     make(chan struct{}),
@@ -122,16 +134,20 @@ func Run(ctx *cli.Context) error {
 		ticker := time.NewTicker(time.Duration(interval) * time.Second)
 		defer ticker.Stop()
 
+		payload := internal.AlphabetNumeric.Generate(payloadSize)
+		if size := len(fileContent); size > 0 {
+			payload = fileContent
+			payloadSize = size
+		}
+		broadcaster := gws.NewBroadcaster(gws.OpcodeBinary, payload)
+
 		for {
 			<-ticker.C
+
 			handler.sessions.Range(func(key, value any) bool {
 				socket := key.(*gws.Conn)
-				payload := internal.AlphabetNumeric.Generate(payloadSize)
 				for i := 0; i < numMessage; i++ {
-					var b [8]byte
-					binary.LittleEndian.PutUint64(b[0:], uint64(time.Now().UnixNano()))
-					payload = append(payload[:payloadSize], b[0:]...)
-					_ = socket.WriteAsync(gws.OpcodeBinary, payload)
+					_ = broadcaster.Broadcast(socket)
 				}
 				return true
 			})
@@ -148,7 +164,7 @@ type Handler struct {
 	done     chan struct{}
 }
 
-func (c *Handler) OnOpen(socket *gws.Conn) { socket.SetNoDelay(false) }
+func (c *Handler) OnOpen(socket *gws.Conn) { _ = socket.SetNoDelay(false) }
 
 func (c *Handler) OnClose(socket *gws.Conn, err error) {
 	if _, ok := err.(*gws.CloseError); !ok {
@@ -164,24 +180,6 @@ func (c *Handler) OnPong(socket *gws.Conn, payload []byte) {}
 func (c *Handler) OnMessage(socket *gws.Conn, message *gws.Message) {
 	defer message.Close()
 	atomic.AddInt64(&c.num, 1)
-}
-
-func (c *Handler) Report(rate int) string {
-	sum := uint64(0)
-	threshold := uint64(rate * N / 100)
-	for i, v := range stats {
-		if v == 0 {
-			continue
-		}
-		sum += v
-		if sum >= threshold {
-			if i == M-1 {
-				return "∞"
-			}
-			return fmt.Sprintf("%dms", i)
-		}
-	}
-	return ""
 }
 
 func (c *Handler) ShowProgress() {

@@ -9,7 +9,7 @@ import (
 	"os"
 )
 
-const Version = "v1.0.10"
+const Version = "v1.0.11"
 
 func main() {
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
