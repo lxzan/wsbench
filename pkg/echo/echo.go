@@ -1,6 +1,7 @@
 package echo
 
 import (
+	"bytes"
 	"crypto/tls"
 	"encoding/binary"
 	"encoding/json"
@@ -19,21 +20,21 @@ import (
 const M = 10000
 
 var (
-	serial       = int64(0)
-	urls         []string
-	compress     bool
-	payloadSize  int
-	numClient    int
-	numMessage   int32
-	fileContents []byte
-	N            int
-	output       string
-	stats        [M]uint64
+	Serial      = int64(0) // 序列号
+	Urls        []string   // 服务器地址列表
+	Compress    bool       // 是否压缩
+	PayloadSize int        // 载荷大小
+	NumClient   int        // 客户端数量
+	NumMessage  int64      // 消息数量
+	Output      string     // 输出JSON文件目录
+	Stats       [M]uint64  // 统计
+	Payload     []byte     // 载荷
+	Concurrency int        // 单连接并发度
 )
 
 func SelectURL() string {
-	nextId := atomic.AddInt64(&serial, 1)
-	return urls[nextId%int64(len(urls))]
+	nextId := atomic.AddInt64(&Serial, 1)
+	return Urls[nextId%int64(len(Urls))]
 }
 
 func NewCommand() *cli.Command {
@@ -47,21 +48,21 @@ func NewCommand() *cli.Command {
 			},
 			&cli.IntFlag{
 				Name:        "c",
-				Usage:       "connections number",
+				Usage:       "number of multiple requests to make at a time",
 				DefaultText: "100",
 				Value:       100,
 				Aliases:     []string{"connection"},
 			},
 			&cli.IntFlag{
 				Name:        "n",
-				Usage:       "messages number",
+				Usage:       "number of requests per connection to perform",
 				DefaultText: "10000",
 				Value:       10000,
 				Aliases:     []string{"message_num"},
 			},
 			&cli.IntFlag{
 				Name:        "p",
-				Usage:       "payload size",
+				Usage:       "payload Size",
 				DefaultText: "4000",
 				Value:       4000,
 				Aliases:     []string{"payload_size"},
@@ -74,13 +75,19 @@ func NewCommand() *cli.Command {
 			},
 			&cli.BoolFlag{
 				Name:        "compress",
-				Usage:       "Whether to turn on compression",
+				Usage:       "whether to turn on compression",
 				DefaultText: "false",
 				Value:       false,
 			},
+			&cli.IntFlag{
+				Name:        "concurrency",
+				Usage:       "single-connection concurrency",
+				DefaultText: "8",
+				Value:       8,
+			},
 			&cli.StringFlag{
 				Name:        "o",
-				Usage:       "output",
+				Usage:       "output json file path",
 				DefaultText: "",
 				Value:       "",
 				Aliases:     []string{"output"},
@@ -91,38 +98,44 @@ func NewCommand() *cli.Command {
 }
 
 func Run(ctx *cli.Context) error {
-	urls = ctx.StringSlice("urls")
-	numClient = ctx.Int("connection")
-	numMessage = int32(ctx.Int("message_num"))
-	payloadSize = ctx.Int("payload_size")
-	compress = ctx.Bool("compress")
-	output = ctx.String("output")
-	N = int(numMessage)
+	Urls = ctx.StringSlice("urls")
+	NumClient = ctx.Int("connection")
+	NumMessage = ctx.Int64("message_num")
+	PayloadSize = ctx.Int("payload_size")
+	Compress = ctx.Bool("compress")
+	Output = ctx.String("output")
+	Concurrency = ctx.Int("concurrency")
+	Payload = internal.AlphabetNumeric.Generate(PayloadSize)
 
 	if dir := ctx.String("file"); dir != "" {
 		b, err := os.ReadFile(dir)
-		fileContents = b
 		if err != nil {
 			return err
 		}
-		fileContents = append(fileContents, "12345678"...)
+		Payload = b
+		PayloadSize = len(b)
 	}
 
 	var handler = &Handler{
+		pool: &sync.Pool{New: func() any {
+			return bytes.NewBuffer(make([]byte, 0, PayloadSize+8))
+		}},
 		done:     make(chan struct{}),
 		sessions: &sync.Map{},
 	}
 
 	var cc = concurrency.NewWorkerGroup[int]()
-	for i := 0; i < numClient; i++ {
+	for i := 0; i < NumClient; i++ {
 		cc.Push(i)
 	}
 	cc.OnMessage = func(args int) error {
 		socket, _, err := gws.NewClient(handler, &gws.ClientOption{
-			ReadBufferSize:  8 * 1024,
-			CompressEnabled: compress,
-			Addr:            SelectURL(),
-			TlsConfig:       &tls.Config{InsecureSkipVerify: true},
+			ReadAsyncEnabled: true,
+			ReadAsyncGoLimit: Concurrency,
+			ReadBufferSize:   8 * 1024,
+			CompressEnabled:  Compress,
+			Addr:             SelectURL(),
+			TlsConfig:        &tls.Config{InsecureSkipVerify: true},
 		})
 		if err != nil {
 			return err
@@ -138,23 +151,8 @@ func Run(ctx *cli.Context) error {
 	var t0 = time.Now()
 	handler.sessions.Range(func(key, value any) bool {
 		go func() {
-			socket := key.(*gws.Conn)
-			payload := internal.AlphabetNumeric.Generate(payloadSize)
-			if len(fileContents) > 0 {
-				payload = fileContents
-				payloadSize = len(fileContents)
-			}
-			waitCh := make(chan struct{}, 1)
-			socket.SessionStorage.Store("waitChKey", waitCh)
-			for {
-				if atomic.AddInt32(&numMessage, -1) < 0 {
-					break
-				}
-				waitCh <- struct{}{}
-				var b [8]byte
-				binary.LittleEndian.PutUint64(b[0:], uint64(time.Now().UnixNano()))
-				payload = append(payload[:payloadSize], b[0:]...)
-				_ = socket.WriteMessage(gws.OpcodeBinary, payload)
+			for i := 0; i < Concurrency; i++ {
+				handler.SendMessage(key.(*gws.Conn))
 			}
 		}()
 		return true
@@ -163,9 +161,9 @@ func Run(ctx *cli.Context) error {
 	go handler.ShowProgress()
 
 	<-handler.done
-	log.Info().Str("Percentage", "100.00%").Int("Requests", N).Msg("")
+	log.Info().Str("Percentage", "100.00%").Int("Requests", int(NumMessage)).Msg("")
 
-	var iops = int(float64(N) / time.Since(t0).Seconds())
+	var iops = int(float64(NumMessage) / time.Since(t0).Seconds())
 	var p50 = handler.Report(50)
 	var p90 = handler.Report(90)
 	var p99 = handler.Report(99)
@@ -178,14 +176,14 @@ func Run(ctx *cli.Context) error {
 		Str("P99", p99).
 		Msg("")
 
-	if output != "" {
-		file, err := os.OpenFile(output, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
+	if Output != "" {
+		file, err := os.OpenFile(Output, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
 		if err != nil {
 			return err
 		}
 		b, _ := json.Marshal(map[string]any{
 			"iops":    iops,
-			"payload": payloadSize,
+			"payload": PayloadSize,
 			"p50":     p50,
 			"p90":     p90,
 			"p99":     p99,
@@ -197,12 +195,14 @@ func Run(ctx *cli.Context) error {
 }
 
 type Handler struct {
-	num      int64
-	sessions *sync.Map
-	done     chan struct{}
+	pool        *sync.Pool
+	numReceived int64
+	numSend     int64
+	sessions    *sync.Map
+	done        chan struct{}
 }
 
-func (c *Handler) OnOpen(socket *gws.Conn) { socket.SetNoDelay(false) }
+func (c *Handler) OnOpen(socket *gws.Conn) { _ = socket.SetNoDelay(false) }
 
 func (c *Handler) OnClose(socket *gws.Conn, err error) {
 	if _, ok := err.(*gws.CloseError); !ok {
@@ -211,33 +211,43 @@ func (c *Handler) OnClose(socket *gws.Conn, err error) {
 	os.Exit(0)
 }
 
-func (c *Handler) OnPing(socket *gws.Conn, payload []byte) {}
+func (c *Handler) OnPing(socket *gws.Conn, payload []byte) { _ = socket.WritePong(nil) }
 
 func (c *Handler) OnPong(socket *gws.Conn, payload []byte) {}
 
 func (c *Handler) OnMessage(socket *gws.Conn, message *gws.Message) {
 	defer message.Close()
 
-	size := message.Data.Len()
-	p := message.Bytes()[size-8:]
-	cost := (uint64(time.Now().UnixNano()) - binary.LittleEndian.Uint64(p)) / 1000000
+	message.Data.Next(PayloadSize)
+	cost := (uint64(time.Now().UnixNano()) - binary.BigEndian.Uint64(message.Bytes())) / 1000000
 	if cost >= M {
 		cost = M - 1
 	}
-	atomic.AddUint64(&stats[cost], 1)
+	atomic.AddUint64(&Stats[cost], 1)
 
-	if atomic.AddInt64(&c.num, 1) == int64(N) {
+	if x := atomic.AddInt64(&c.numReceived, 1); x == NumMessage {
 		c.done <- struct{}{}
+		return
 	}
-	wait, _ := socket.SessionStorage.Load("waitChKey")
-	waitCh := wait.(chan struct{})
-	<-waitCh
+	c.SendMessage(socket)
+}
+
+func (c *Handler) SendMessage(socket *gws.Conn) {
+	if atomic.AddInt64(&c.numSend, 1) <= NumMessage {
+		buf := c.pool.Get().(*bytes.Buffer)
+		if buf.Len() == 0 {
+			buf.Write(Payload)
+		}
+		p := binary.BigEndian.AppendUint64(buf.Bytes(), uint64(time.Now().UnixNano()))
+		_ = socket.WriteMessage(gws.OpcodeBinary, p)
+		c.pool.Put(buf)
+	}
 }
 
 func (c *Handler) Report(rate int) string {
 	sum := uint64(0)
-	threshold := uint64(rate * N / 100)
-	for i, v := range stats {
+	threshold := uint64(int64(rate) * NumMessage / 100)
+	for i, v := range Stats {
 		if v == 0 {
 			continue
 		}
@@ -257,8 +267,8 @@ func (c *Handler) ShowProgress() {
 	defer ticker.Stop()
 	for {
 		<-ticker.C
-		requests := atomic.LoadInt64(&c.num)
-		percentage := fmt.Sprintf("%.2f", float64(100*requests)/float64(N)) + "%"
+		requests := atomic.LoadInt64(&c.numReceived)
+		percentage := fmt.Sprintf("%.2f", float64(100*requests)/float64(NumMessage)) + "%"
 		log.Info().Str("Percentage", percentage).Int64("Requests", requests).Msg("")
 	}
 }

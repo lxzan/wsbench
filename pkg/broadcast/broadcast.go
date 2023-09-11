@@ -13,24 +13,20 @@ import (
 	"time"
 )
 
-const M = 10000
-
 var (
-	serial      = int64(0)
-	urls        []string
-	compress    bool
-	payloadSize int
-	numClient   int
-	numMessage  int
-	N           int
-	interval    int
-	fileContent []byte
-	stats       [M]uint64
+	Serial      = int64(0)
+	Urls        []string
+	Compress    bool
+	Payload     []byte
+	PayloadSize int
+	NumClient   int
+	NumMessage  int
+	Interval    int
 )
 
 func SelectURL() string {
-	nextId := atomic.AddInt64(&serial, 1)
-	return urls[nextId%int64(len(urls))]
+	nextId := atomic.AddInt64(&Serial, 1)
+	return Urls[nextId%int64(len(Urls))]
 }
 
 func NewCommand() *cli.Command {
@@ -44,14 +40,14 @@ func NewCommand() *cli.Command {
 			},
 			&cli.IntFlag{
 				Name:        "c",
-				Usage:       "connections number",
+				Usage:       "number of multiple requests to make at a time",
 				DefaultText: "100",
 				Value:       100,
 				Aliases:     []string{"connection"},
 			},
 			&cli.IntFlag{
 				Name:        "n",
-				Usage:       "messages number",
+				Usage:       "number of requests to perform",
 				DefaultText: "10000",
 				Value:       10000,
 				Aliases:     []string{"message_num"},
@@ -65,7 +61,7 @@ func NewCommand() *cli.Command {
 			},
 			&cli.BoolFlag{
 				Name:        "compress",
-				Usage:       "Whether to turn on compression",
+				Usage:       "whether to turn on compression",
 				DefaultText: "false",
 				Value:       false,
 			},
@@ -88,19 +84,20 @@ func NewCommand() *cli.Command {
 }
 
 func Run(ctx *cli.Context) error {
-	urls = ctx.StringSlice("urls")
-	numClient = ctx.Int("connection")
-	numMessage = ctx.Int("message_num")
-	payloadSize = ctx.Int("payload_size")
-	compress = ctx.Bool("compress")
-	interval = ctx.Int("interval")
-	N = numClient * numMessage
+	Urls = ctx.StringSlice("urls")
+	NumClient = ctx.Int("connection")
+	NumMessage = ctx.Int("message_num")
+	PayloadSize = ctx.Int("payload_size")
+	Payload = internal.AlphabetNumeric.Generate(PayloadSize)
+	Compress = ctx.Bool("compress")
+	Interval = ctx.Int("interval")
 	if s := ctx.String("file"); len(s) > 0 {
 		content, err := os.ReadFile(s)
 		if err != nil {
 			return err
 		}
-		fileContent = content
+		Payload = content
+		PayloadSize = len(content)
 	}
 
 	var handler = &Handler{
@@ -109,13 +106,13 @@ func Run(ctx *cli.Context) error {
 	}
 
 	var cc = concurrency.NewWorkerGroup[int]()
-	for i := 0; i < numClient; i++ {
+	for i := 0; i < NumClient; i++ {
 		cc.Push(i)
 	}
 	cc.OnMessage = func(args int) error {
 		socket, _, err := gws.NewClient(handler, &gws.ClientOption{
 			ReadBufferSize:  8 * 1024,
-			CompressEnabled: compress,
+			CompressEnabled: Compress,
 			Addr:            SelectURL(),
 			TlsConfig:       &tls.Config{InsecureSkipVerify: true},
 		})
@@ -131,22 +128,16 @@ func Run(ctx *cli.Context) error {
 	}
 
 	go func() {
-		ticker := time.NewTicker(time.Duration(interval) * time.Second)
+		ticker := time.NewTicker(time.Duration(Interval) * time.Second)
 		defer ticker.Stop()
 
-		payload := internal.AlphabetNumeric.Generate(payloadSize)
-		if size := len(fileContent); size > 0 {
-			payload = fileContent
-			payloadSize = size
-		}
-		broadcaster := gws.NewBroadcaster(gws.OpcodeBinary, payload)
-
+		broadcaster := gws.NewBroadcaster(gws.OpcodeBinary, Payload)
 		for {
 			<-ticker.C
 
 			handler.sessions.Range(func(key, value any) bool {
 				socket := key.(*gws.Conn)
-				for i := 0; i < numMessage; i++ {
+				for i := 0; i < NumMessage; i++ {
 					_ = broadcaster.Broadcast(socket)
 				}
 				return true
@@ -183,7 +174,7 @@ func (c *Handler) OnMessage(socket *gws.Conn, message *gws.Message) {
 }
 
 func (c *Handler) ShowProgress() {
-	ticker := time.NewTicker(time.Duration(interval) * time.Second)
+	ticker := time.NewTicker(time.Duration(Interval) * time.Second)
 	defer ticker.Stop()
 	for {
 		<-ticker.C
