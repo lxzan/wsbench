@@ -24,7 +24,7 @@ var (
 	compress     bool
 	payloadSize  int
 	numClient    int
-	numMessage   int
+	numMessage   int32
 	fileContents []byte
 	N            int
 	output       string
@@ -93,11 +93,11 @@ func NewCommand() *cli.Command {
 func Run(ctx *cli.Context) error {
 	urls = ctx.StringSlice("urls")
 	numClient = ctx.Int("connection")
-	numMessage = ctx.Int("message_num")
+	numMessage = int32(ctx.Int("message_num"))
 	payloadSize = ctx.Int("payload_size")
 	compress = ctx.Bool("compress")
 	output = ctx.String("output")
-	N = numClient * numMessage
+	N = int(numMessage)
 
 	if dir := ctx.String("file"); dir != "" {
 		b, err := os.ReadFile(dir)
@@ -144,7 +144,13 @@ func Run(ctx *cli.Context) error {
 				payload = fileContents
 				payloadSize = len(fileContents)
 			}
-			for i := 0; i < numMessage; i++ {
+			waitCh := make(chan struct{}, 1)
+			socket.SessionStorage.Store("waitChKey", waitCh)
+			for {
+				if atomic.AddInt32(&numMessage, -1) < 0 {
+					break
+				}
+				waitCh <- struct{}{}
 				var b [8]byte
 				binary.LittleEndian.PutUint64(b[0:], uint64(time.Now().UnixNano()))
 				payload = append(payload[:payloadSize], b[0:]...)
@@ -223,6 +229,9 @@ func (c *Handler) OnMessage(socket *gws.Conn, message *gws.Message) {
 	if atomic.AddInt64(&c.num, 1) == int64(N) {
 		c.done <- struct{}{}
 	}
+	wait, _ := socket.SessionStorage.Load("waitChKey")
+	waitCh := wait.(chan struct{})
+	<-waitCh
 }
 
 func (c *Handler) Report(rate int) string {
