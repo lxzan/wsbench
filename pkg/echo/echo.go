@@ -20,6 +20,8 @@ import (
 const M = 10000
 
 var (
+	defaultTimestamp = []byte{0, 0, 0, 0, 0, 0, 0, 0}
+
 	Serial      = int64(0) // 序列号
 	Urls        []string   // 服务器地址列表
 	Compress    bool       // 是否压缩
@@ -218,8 +220,13 @@ func (c *Handler) OnPong(socket *gws.Conn, payload []byte) {}
 func (c *Handler) OnMessage(socket *gws.Conn, message *gws.Message) {
 	defer message.Close()
 
-	message.Data.Next(PayloadSize)
-	cost := (uint64(time.Now().UnixNano()) - binary.BigEndian.Uint64(message.Bytes())) / 1000000
+	var timestamp = defaultTimestamp
+	if message.Data.Len() == PayloadSize+8 {
+		message.Data.Next(PayloadSize)
+		timestamp = message.Bytes()
+	}
+
+	cost := (uint64(time.Now().UnixNano()) - binary.BigEndian.Uint64(timestamp)) / 1000000
 	if cost >= M {
 		cost = M - 1
 	}
