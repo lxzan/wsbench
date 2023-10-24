@@ -13,8 +13,8 @@ import (
 	"time"
 )
 
-var (
-	Serial      = int64(0)
+type Params struct {
+	Serial      int64
 	Urls        []string
 	Compress    bool
 	Payload     []byte
@@ -22,11 +22,6 @@ var (
 	NumClient   int
 	NumMessage  int
 	Interval    int
-)
-
-func SelectURL() string {
-	nextId := atomic.AddInt64(&Serial, 1)
-	return Urls[nextId%int64(len(Urls))]
 }
 
 func NewCommand() *cli.Command {
@@ -84,36 +79,38 @@ func NewCommand() *cli.Command {
 }
 
 func Run(ctx *cli.Context) error {
-	Urls = ctx.StringSlice("urls")
-	NumClient = ctx.Int("connection")
-	NumMessage = ctx.Int("message_num")
-	PayloadSize = ctx.Int("payload_size")
-	Payload = internal.AlphabetNumeric.Generate(PayloadSize)
-	Compress = ctx.Bool("compress")
-	Interval = ctx.Int("interval")
+	var params = &Params{}
+	params.Urls = ctx.StringSlice("urls")
+	params.NumClient = ctx.Int("connection")
+	params.NumMessage = ctx.Int("message_num")
+	params.PayloadSize = ctx.Int("payload_size")
+	params.Payload = internal.AlphabetNumeric.Generate(params.PayloadSize)
+	params.Compress = ctx.Bool("compress")
+	params.Interval = ctx.Int("interval")
 	if s := ctx.String("file"); len(s) > 0 {
 		content, err := os.ReadFile(s)
 		if err != nil {
 			return err
 		}
-		Payload = content
-		PayloadSize = len(content)
+		params.Payload = content
+		params.PayloadSize = len(content)
 	}
 
 	var handler = &Handler{
+		params:   params,
 		done:     make(chan struct{}),
 		sessions: &sync.Map{},
 	}
 
 	var cc = concurrency.NewWorkerGroup[int]()
-	for i := 0; i < NumClient; i++ {
+	for i := 0; i < params.NumClient; i++ {
 		cc.Push(i)
 	}
 	cc.OnMessage = func(args int) error {
 		socket, _, err := gws.NewClient(handler, &gws.ClientOption{
 			ReadBufferSize:  8 * 1024,
-			CompressEnabled: Compress,
-			Addr:            SelectURL(),
+			CompressEnabled: params.Compress,
+			Addr:            handler.SelectURL(),
 			TlsConfig:       &tls.Config{InsecureSkipVerify: true},
 		})
 		if err != nil {
@@ -128,16 +125,16 @@ func Run(ctx *cli.Context) error {
 	}
 
 	go func() {
-		ticker := time.NewTicker(time.Duration(Interval) * time.Second)
+		ticker := time.NewTicker(time.Duration(params.Interval) * time.Second)
 		defer ticker.Stop()
 
-		broadcaster := gws.NewBroadcaster(gws.OpcodeBinary, Payload)
+		broadcaster := gws.NewBroadcaster(gws.OpcodeBinary, params.Payload)
 		for {
 			<-ticker.C
 
 			handler.sessions.Range(func(key, value any) bool {
 				socket := key.(*gws.Conn)
-				for i := 0; i < NumMessage; i++ {
+				for i := 0; i < params.NumMessage; i++ {
 					_ = broadcaster.Broadcast(socket)
 				}
 				return true
@@ -150,9 +147,15 @@ func Run(ctx *cli.Context) error {
 }
 
 type Handler struct {
+	params   *Params
 	num      int64
 	sessions *sync.Map
 	done     chan struct{}
+}
+
+func (c *Handler) SelectURL() string {
+	nextId := atomic.AddInt64(&c.params.Serial, 1)
+	return c.params.Urls[nextId%int64(len(c.params.Urls))]
 }
 
 func (c *Handler) OnOpen(socket *gws.Conn) { _ = socket.SetNoDelay(false) }
@@ -174,7 +177,7 @@ func (c *Handler) OnMessage(socket *gws.Conn, message *gws.Message) {
 }
 
 func (c *Handler) ShowProgress() {
-	ticker := time.NewTicker(time.Duration(Interval) * time.Second)
+	ticker := time.NewTicker(time.Duration(c.params.Interval) * time.Second)
 	defer ticker.Stop()
 	for {
 		<-ticker.C
