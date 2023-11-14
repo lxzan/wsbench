@@ -177,13 +177,16 @@ func Run(ctx *cli.Context) error {
 	if params.Latency {
 		var p50 = handler.Report(50)
 		var p90 = handler.Report(90)
+		var p95 = handler.Report(95)
 		var p99 = handler.Report(99)
 		output["p50"] = p50
 		output["p90"] = p90
+		output["p95"] = p95
 		output["p99"] = p99
 		logger.
 			Str("P50", p50).
 			Str("P90", p90).
+			Str("P95", p95).
 			Str("P99", p99)
 	}
 	logger.Msg("")
