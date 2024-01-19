@@ -108,10 +108,14 @@ func Run(ctx *cli.Context) error {
 	}
 	cc.OnMessage = func(args int) error {
 		socket, _, err := gws.NewClient(handler, &gws.ClientOption{
-			ReadBufferSize:  8 * 1024,
-			CompressEnabled: params.Compress,
-			Addr:            handler.SelectURL(),
-			TlsConfig:       &tls.Config{InsecureSkipVerify: true},
+			ReadBufferSize: 8 * 1024,
+			Addr:           handler.SelectURL(),
+			TlsConfig:      &tls.Config{InsecureSkipVerify: true},
+			PermessageDeflate: gws.PermessageDeflate{
+				Enabled:               params.Compress,
+				ServerContextTakeover: true,
+				ClientContextTakeover: true,
+			},
 		})
 		if err != nil {
 			return err
