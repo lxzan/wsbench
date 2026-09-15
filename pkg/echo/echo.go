@@ -109,6 +109,9 @@ func Run(ctx *cli.Context) error {
 	params.Latency = ctx.Bool("latency")
 	params.Output = ctx.String("output")
 	params.Concurrency = ctx.Int("concurrency")
+	if params.Concurrency <= 0 {
+		params.Concurrency = 1
+	}
 	params.Payload = internal.AlphabetNumeric.Generate(params.PayloadSize)
 
 	if dir := ctx.String("file"); dir != "" {
@@ -125,7 +128,7 @@ func Run(ctx *cli.Context) error {
 		pool: &sync.Pool{New: func() any {
 			return bytes.NewBuffer(make([]byte, 0, params.PayloadSize+8))
 		}},
-		done:     make(chan struct{}),
+		done:     make(chan struct{}, 1),
 		sessions: &sync.Map{},
 	}
 
@@ -159,17 +162,21 @@ func Run(ctx *cli.Context) error {
 
 	var t0 = time.Now()
 	handler.sessions.Range(func(key, value any) bool {
-		go func() {
-			for i := 0; i < params.Concurrency; i++ {
-				handler.SendMessage(key.(*gws.Conn), params.Payload)
-			}
-		}()
+		socket := key.(*gws.Conn)
+		for i := 0; i < params.Concurrency; i++ {
+			go func() {
+				for handler.SendMessage(socket, params.Payload) {
+				}
+			}()
+		}
 		return true
 	})
 
-	go handler.ShowProgress()
+	var exit = make(chan struct{})
+	go handler.ShowProgress(exit)
 
 	<-handler.done
+	close(exit)
 	log.Info().Str("Percentage", "100.00%").Int("Requests", int(params.NumMessage)).Msg("")
 
 	var iops = int(float64(params.NumMessage) / time.Since(t0).Seconds())
@@ -200,6 +207,7 @@ func Run(ctx *cli.Context) error {
 		if err != nil {
 			return err
 		}
+		defer file.Close()
 		b, _ := json.Marshal(output)
 		b = append(b, '\n')
 		_, _ = file.Write(b)
@@ -254,21 +262,24 @@ func (c *Handler) OnMessage(socket *gws.Conn, message *gws.Message) {
 		c.done <- struct{}{}
 		return
 	}
-	c.SendMessage(socket, c.params.Payload)
 }
 
-func (c *Handler) SendMessage(socket *gws.Conn, payload []byte) {
+func (c *Handler) SendMessage(socket *gws.Conn, payload []byte) bool {
 	if atomic.AddInt64(&c.numSend, 1) <= c.params.NumMessage {
-		buf := c.pool.Get().(*bytes.Buffer)
-		buf.Reset()
-		buf.Write(payload)
-		p := buf.Bytes()
+		var err error
 		if c.params.Latency {
-			p = binary.BigEndian.AppendUint64(buf.Bytes(), uint64(time.Now().UnixNano()))
+			buf := c.pool.Get().(*bytes.Buffer)
+			buf.Reset()
+			buf.Write(payload)
+			p := binary.BigEndian.AppendUint64(buf.Bytes(), uint64(time.Now().UnixNano()))
+			err = socket.WriteMessage(gws.OpcodeBinary, p)
+			c.pool.Put(buf)
+		} else {
+			err = socket.WriteMessage(gws.OpcodeBinary, payload)
 		}
-		_ = socket.WriteMessage(gws.OpcodeBinary, p)
-		c.pool.Put(buf)
+		return err == nil
 	}
+	return false
 }
 
 func (c *Handler) Report(rate int) string {
@@ -289,13 +300,17 @@ func (c *Handler) Report(rate int) string {
 	return ""
 }
 
-func (c *Handler) ShowProgress() {
+func (c *Handler) ShowProgress(exit chan struct{}) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
-		<-ticker.C
-		requests := atomic.LoadInt64(&c.numReceived)
-		percentage := fmt.Sprintf("%.2f", float64(100*requests)/float64(c.params.NumMessage)) + "%"
-		log.Info().Str("Percentage", percentage).Int64("Requests", requests).Msg("")
+		select {
+		case <-exit:
+			return
+		case <-ticker.C:
+			requests := atomic.LoadInt64(&c.numReceived)
+			percentage := fmt.Sprintf("%.2f", float64(100*requests)/float64(c.params.NumMessage)) + "%"
+			log.Info().Str("Percentage", percentage).Int64("Requests", requests).Msg("")
+		}
 	}
 }
